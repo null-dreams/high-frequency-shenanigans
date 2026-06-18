@@ -1,29 +1,41 @@
 #include "orderbook/OrderBook.hpp"
 
+/**
+ * @file OrderBook.cpp
+ * @brief Implementation of the OrderBook class methods.
+ */
+
 namespace orderbook {
 
+/**
+ * @brief Processes and places a new order.
+ * 
+ * Flow:
+ * 1. Checks for duplicate order ID; if found, the order is ignored.
+ * 2. Attempts to match the incoming order against resting orders on the opposite side.
+ * 3. If the incoming order is not fully filled (remaining quantity > 0):
+ *    - Obtains or creates the Limit level for the order's price.
+ *    - Updates the Limit level's total volume.
+ *    - Appends the order to the Limit level's FIFO queue.
+ *    - Inserts a record of the order into the registry for O(1) lookups.
+ */
 void OrderBook::add_order(OrderId id, Price price, Quantity qty, Side side) {
-    // Prevent duplicate OrderIds
     if (order_registry_.find(id) != order_registry_.end()) {
         return; 
     }
 
     Order incoming{id, price, qty, side};
 
-    // 1. Attempt to match the incoming order against resting orders
     match_order(incoming);
 
-    // 2. If there is remaining quantity, insert the order into the book
     if (incoming.quantity > 0) {
         if (side == Side::Buy) {
-            // try_emplace avoids requiring a default constructor for Limit
             auto [map_it, inserted] = bids_.try_emplace(price, price);
             Limit& limit = map_it->second;
             
             limit.totalQuantity += incoming.quantity;
             limit.orders.push_back(incoming);
             
-            // Register the order with an iterator to its position in the list
             order_registry_.try_emplace(id, OrderRecord{--limit.orders.end(), side, price});
         } else {
             auto [map_it, inserted] = asks_.try_emplace(price, price);
@@ -37,9 +49,21 @@ void OrderBook::add_order(OrderId id, Price price, Quantity qty, Side side) {
     }
 }
 
+/**
+ * @brief Matches an incoming order against existing resting orders on the opposite side of the book.
+ * 
+ * Iterates through the opposite side's price levels starting from the best available price:
+ * - Bids match against asks (lowest price first).
+ * - Asks match against bids (highest price first).
+ * 
+ * Within each price level, orders are matched in FIFO (price-time priority) order.
+ * If a resting order is fully filled, it is removed from the book and the registry.
+ * If a resting order is partially filled, its quantity is reduced.
+ * If a price level becomes empty, the level is erased from the book.
+ * Matching stops when the incoming order is fully filled or price crossing limits are exceeded.
+ */
 void OrderBook::match_order(Order& incoming) {
     if (incoming.side == Side::Buy) {
-        // Match against asks starting from the lowest price (asks_.begin())
         auto it = asks_.begin();
         while (it != asks_.end() && incoming.quantity > 0 && it->first <= incoming.price) {
             Limit& limit = it->second;
@@ -47,20 +71,17 @@ void OrderBook::match_order(Order& incoming) {
 
             while (order_it != limit.orders.end() && incoming.quantity > 0) {
                 if (incoming.quantity >= order_it->quantity) {
-                    // Full fill of resting order
                     incoming.quantity -= order_it->quantity;
                     limit.totalQuantity -= order_it->quantity;
                     order_registry_.erase(order_it->id);
-                    order_it = limit.orders.erase(order_it); // O(1) list removal
+                    order_it = limit.orders.erase(order_it);
                 } else {
-                    // Partial fill of resting order
                     order_it->quantity -= incoming.quantity;
                     limit.totalQuantity -= incoming.quantity;
                     incoming.quantity = 0;
                 }
             }
 
-            // Clean up empty price level
             if (limit.orders.empty()) {
                 it = asks_.erase(it);
             } else {
@@ -68,7 +89,6 @@ void OrderBook::match_order(Order& incoming) {
             }
         }
     } else {
-        // Match against bids starting from the highest price (bids_.begin())
         auto it = bids_.begin();
         while (it != bids_.end() && incoming.quantity > 0 && it->first >= incoming.price) {
             Limit& limit = it->second;
@@ -96,6 +116,16 @@ void OrderBook::match_order(Order& incoming) {
     }
 }
 
+/**
+ * @brief Cancels an existing order by its unique ID.
+ * 
+ * Flow:
+ * 1. Checks if the order exists in the registry.
+ * 2. Deducts the order's remaining quantity from the Limit level's total volume.
+ * 3. Erases the order from the Limit level's list in O(1) time using the cached iterator.
+ * 4. If the Limit level is now empty, removes the price level from the map.
+ * 5. Erases the order record from the registry.
+ */
 void OrderBook::cancel_order(OrderId id) {
     auto lookup = order_registry_.find(id);
     if (lookup == order_registry_.end()) {
@@ -132,6 +162,9 @@ void OrderBook::cancel_order(OrderId id) {
     order_registry_.erase(lookup);
 }
 
+/**
+ * @brief Retrieves the aggregate resting volume (quantity) at the specified price level and side.
+ */
 Quantity OrderBook::get_volume_at_price(Price price, Side side) const {
     if (side == Side::Buy) {
         auto it = bids_.find(price);
@@ -142,6 +175,9 @@ Quantity OrderBook::get_volume_at_price(Price price, Side side) const {
     }
 }
 
+/**
+ * @brief Returns the total number of active orders resting in the book.
+ */
 std::size_t OrderBook::size() const noexcept {
     return order_registry_.size();
 }
