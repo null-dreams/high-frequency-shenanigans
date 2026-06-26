@@ -8,6 +8,7 @@
 #include "Types.hpp"
 #include "Order.hpp"
 #include "Limit.hpp"
+#include "ObjectPool.hpp"
 
 #include <map>
 #include <unordered_map>
@@ -31,7 +32,7 @@ public:
     /**
      * @brief Constructs an empty OrderBook.
      */
-    OrderBook() = default;
+    explicit OrderBook(size_t order_pool_capacity = 1000000);
 
     /**
      * @brief Destructs the OrderBook, reclaiming all internal structures.
@@ -99,21 +100,19 @@ private:
     /// Asks sorted in ascending order (lowest price first).
     std::map<Price, Limit, std::less<Price>> asks_;
 
-    /// Iterator type pointing to an Order in a Limit level list.
-    using OrderIterator = std::list<Order>::iterator;
-
     /**
      * @struct OrderRecord
      * @brief Metadata stored in the registry to locate a resting order in O(1) time.
      */
     struct OrderRecord {
-        OrderIterator iterator; ///< Pointer to the order's node in the Limit's doubly-linked list
+        Order* order_ptr;       ///< Pointer to the order's node in the Limit's doubly-linked list
         Side side;              ///< Side of the book the order is resting on
         Price price;            ///< Price level the order is located at
     };
 
     /// Registry mapping OrderId to its metadata record for rapid cancellation lookups.
     std::unordered_map<OrderId, OrderRecord> order_registry_;
+    OrderPool pool_;
 
     /**
      * @brief Internal helper to match an incoming order against existing resting orders.

@@ -22,6 +22,9 @@ struct Order {
     Quantity quantity; ///< Remaining quantity to be matched
     Side side;         ///< Order side (Buy or Sell)
 
+    // Instrusive pointers for price level queue
+    Order* next{nullptr};
+    Order* prev{nullptr};
     /**
      * @brief Constructs an Order with the given parameters.
      * 
