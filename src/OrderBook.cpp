@@ -7,6 +7,10 @@
 
 namespace orderbook {
 
+OrderBook::OrderBook(size_t order_pool_capacity) : pool_(order_pool_capacity) {
+    order_registry_.reserve(order_pool_capacity);
+}
+
 /**
  * @brief Processes and places a new order.
  * 
@@ -25,26 +29,26 @@ void OrderBook::add_order(OrderId id, Price price, Quantity qty, Side side) {
     }
 
     Order incoming{id, price, qty, side};
-
     match_order(incoming);
 
     if (incoming.quantity > 0) {
+        Order *resting = pool_.acquire(id, price, incoming.quantity, side);
         if (side == Side::Buy) {
             auto [map_it, inserted] = bids_.try_emplace(price, price);
             Limit& limit = map_it->second;
             
-            limit.totalQuantity += incoming.quantity;
-            limit.orders.push_back(incoming);
+            limit.totalQuantity += resting->quantity;
+            limit.push_back(resting);
             
-            order_registry_.try_emplace(id, OrderRecord{--limit.orders.end(), side, price});
+            order_registry_.try_emplace(id, OrderRecord{resting, side, price});
         } else {
             auto [map_it, inserted] = asks_.try_emplace(price, price);
             Limit& limit = map_it->second;
             
-            limit.totalQuantity += incoming.quantity;
-            limit.orders.push_back(incoming);
+            limit.totalQuantity += resting->quantity;
+            limit.push_back(resting);
             
-            order_registry_.try_emplace(id, OrderRecord{--limit.orders.end(), side, price});
+            order_registry_.try_emplace(id, OrderRecord{resting, side, price});
         }
     }
 }
@@ -67,22 +71,26 @@ void OrderBook::match_order(Order& incoming) {
         auto it = asks_.begin();
         while (it != asks_.end() && incoming.quantity > 0 && it->first <= incoming.price) {
             Limit& limit = it->second;
-            auto order_it = limit.orders.begin();
+            Order *order_it = limit.head;
 
-            while (order_it != limit.orders.end() && incoming.quantity > 0) {
+            while (order_it != nullptr && incoming.quantity > 0) {
+                Order* next_order = order_it->next;
                 if (incoming.quantity >= order_it->quantity) {
                     incoming.quantity -= order_it->quantity;
                     limit.totalQuantity -= order_it->quantity;
                     order_registry_.erase(order_it->id);
-                    order_it = limit.orders.erase(order_it);
+                    limit.erase(order_it);
+                    pool_.release(order_it);
+                    order_it = next_order;
                 } else {
                     order_it->quantity -= incoming.quantity;
                     limit.totalQuantity -= incoming.quantity;
                     incoming.quantity = 0;
+                    break;
                 }
             }
 
-            if (limit.orders.empty()) {
+            if (limit.empty()) {
                 it = asks_.erase(it);
             } else {
                 ++it;
@@ -92,22 +100,26 @@ void OrderBook::match_order(Order& incoming) {
         auto it = bids_.begin();
         while (it != bids_.end() && incoming.quantity > 0 && it->first >= incoming.price) {
             Limit& limit = it->second;
-            auto order_it = limit.orders.begin();
+            Order *order_it = limit.head;
 
-            while (order_it != limit.orders.end() && incoming.quantity > 0) {
+            while (order_it != nullptr && incoming.quantity > 0) {
+                Order* next_order = order_it->next;
                 if (incoming.quantity >= order_it->quantity) {
                     incoming.quantity -= order_it->quantity;
                     limit.totalQuantity -= order_it->quantity;
                     order_registry_.erase(order_it->id);
-                    order_it = limit.orders.erase(order_it);
+                    limit.erase(order_it);
+                    pool_.release(order_it);
+                    order_it = next_order;
                 } else {
                     order_it->quantity -= incoming.quantity;
                     limit.totalQuantity -= incoming.quantity;
                     incoming.quantity = 0;
+                    break;
                 }
             }
 
-            if (limit.orders.empty()) {
+            if (limit.empty()) {
                 it = bids_.erase(it);
             } else {
                 ++it;
@@ -135,15 +147,15 @@ void OrderBook::cancel_order(OrderId id) {
     const auto& record = lookup->second;
     Price price = record.price;
     Side side = record.side;
-    auto order_it = record.iterator;
+    Order* target_order = record.order_ptr;
 
     if (side == Side::Buy) {
         auto map_it = bids_.find(price);
         if (map_it != bids_.end()) {
             Limit& limit = map_it->second;
-            limit.totalQuantity -= order_it->quantity;
-            limit.orders.erase(order_it);
-            if (limit.orders.empty()) {
+            limit.totalQuantity -= target_order->quantity;
+            limit.erase(target_order);
+            if (limit.empty()) {
                 bids_.erase(map_it);
             }
         }
@@ -151,14 +163,14 @@ void OrderBook::cancel_order(OrderId id) {
         auto map_it = asks_.find(price);
         if (map_it != asks_.end()) {
             Limit& limit = map_it->second;
-            limit.totalQuantity -= order_it->quantity;
-            limit.orders.erase(order_it);
-            if (limit.orders.empty()) {
+            limit.totalQuantity -= target_order->quantity;
+            limit.erase(target_order);
+            if (limit.empty()) {
                 asks_.erase(map_it);
             }
         }
     }
-
+    pool_.release(target_order);
     order_registry_.erase(lookup);
 }
 
