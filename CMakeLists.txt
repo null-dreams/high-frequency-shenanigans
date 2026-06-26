@@ -12,6 +12,9 @@ add_library(orderbook
 
 target_include_directories(orderbook PUBLIC include)
 
-# Define the executable
+# Define the executables
 add_executable(lob_runner main.cpp)
 target_link_libraries(lob_runner PRIVATE orderbook)
+
+add_executable(lob_benchmark src/Benchmark.cpp)
+target_link_libraries(lob_benchmark PRIVATE orderbook)
