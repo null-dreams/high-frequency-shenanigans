@@ -76,9 +76,46 @@ After compilation, execute the test runner to verify correctness:
 ./lob_runner
 ```
 
+### Running Benchmarks
+We also provide a baseline LOB benchmark utility (`lob_benchmark`) that processes packed binary market event streams to measure throughput and latency.
+
+#### 1. Compile the Benchmark Target
+Build the benchmark target from the build directory:
+```bash
+make lob_benchmark # or simply run: make
+```
+
+#### 2. Binary Event Stream Format
+The benchmark utility reads event streams in a raw, packed binary format. Each event must strictly align to the following 1-byte packed struct:
+```cpp
+#pragma pack(push, 1)
+struct MarketEvent {
+    uint8_t type;       // 1 = Add Order, 2 = Cancel Order
+    uint64_t order_id;  // Unique ID of the order
+    uint64_t price;     // Limit Price
+    uint32_t qty;       // Order Quantity
+    uint8_t side;       // 0 = Buy, 1 = Sell
+};
+#pragma pack(pop)
+```
+
+#### 3. Execution
+Run the benchmark by passing the path to the serialized binary event file:
+```bash
+./lob_benchmark <path_to_benchmark_data.bin>
+```
+
+#### 4. Outputs
+Upon execution, the utility reports performance metrics:
+- **Total processed events**: Count of processed operations.
+- **Execution time**: Time taken to process the entire event loop (ms).
+- **Throughput**: Transactions processed per second (ops/sec).
+- **Average latency**: Mean processing latency per event (ns).
+- **Final book size**: Remaining resting orders in the book.
+
 ---
 
-## 4. Future Performance Optimizations (Next Updates)
+## 5. Future Performance Optimizations (Next Updates)
 To achieve sub-microsecond matching latency in real-world environments, the next phase of development will focus on the following optimizations:
 
 1. **Pre-allocated Memory Pools (Custom Allocators)**:
